@@ -1,0 +1,8 @@
+# ============================================================================
+# plan_spawn/config/__init__.py
+# ============================================================================
+"""Configuration and settings."""
+
+from .settings import settings, Settings
+
+__all__ = ["settings", "Settings"]

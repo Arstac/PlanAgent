@@ -1,0 +1,20 @@
+"""
+Plan-and-Spawn Agent System
+
+A multi-agent orchestration framework that decomposes complex tasks
+into subtasks executed by specialized ephemeral agents.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Plan-and-Spawn"
+
+from .core.orchestrator import Orchestrator
+from .core.models import TaskRequest, Plan, Step, StepResult
+
+__all__ = [
+    "Orchestrator",
+    "TaskRequest",
+    "Plan",
+    "Step",
+    "StepResult"
+]
