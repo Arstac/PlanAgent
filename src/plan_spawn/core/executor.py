@@ -87,8 +87,8 @@ class Executor:
 
                         # Print execution log for debugging
                         if result.log:
-                            self.console.print(f"  [yellow]Execution log:[/yellow]")
-                            for log_entry in result.log[-10:]:  # Last 10 entries
+                            self.console.print(f"  [yellow]Execution log (last 30 entries):[/yellow]")
+                            for log_entry in result.log[-30:]:  # Last 30 entries
                                 self.console.print(f"    [dim]{log_entry}[/dim]")
 
                         # Stop on critical failure

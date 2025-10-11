@@ -74,7 +74,12 @@ class AgentRuntime:
         while iteration < max_iterations:
             iteration += 1
             execution_log.append(f"Iteration {iteration}")
-            
+
+            # Print progress to console for real-time monitoring
+            from rich.console import Console
+            console = Console()
+            console.print(f"  [dim]→ Iteration {iteration}/{max_iterations}[/dim]")
+
             try:
                 # Make API call to Claude
                 response = self.client.messages.create(
@@ -100,8 +105,9 @@ class AgentRuntime:
                         if content_block.type == "tool_use":
                             tool_name = content_block.name
                             tool_input = content_block.input
-                            
+
                             execution_log.append(f"Tool call: {tool_name}")
+                            console.print(f"    [cyan]🔧 {tool_name}[/cyan]")
                             
                             # Execute tool
                             tool_result = await self._execute_tool(
@@ -109,8 +115,16 @@ class AgentRuntime:
                                 tool_input,
                                 step.id
                             )
-                            
-                            execution_log.append(f"Tool result: {tool_result.get('status', 'unknown')}")
+
+                            # Log detailed result
+                            status = tool_result.get('status', 'unknown')
+                            execution_log.append(f"Tool result: {status}")
+                            if status == 'error':
+                                error_msg = tool_result.get('error', 'Unknown error')
+                                execution_log.append(f"  Error details: {error_msg}")
+                                console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
+                            elif status == 'success':
+                                console.print(f"      [green]✓ Success[/green]")
                             
                             tool_results.append({
                                 "type": "tool_result",
@@ -124,6 +138,7 @@ class AgentRuntime:
                 
                 elif response.stop_reason == "max_tokens":
                     execution_log.append("Warning: Hit max_tokens limit")
+                    console.print(f"    [yellow]⚠ Hit max_tokens limit[/yellow]")
 
                     # Check if there are any tool_use blocks that need results
                     tool_results = []
@@ -144,7 +159,15 @@ class AgentRuntime:
                                 step.id
                             )
 
-                            execution_log.append(f"Tool result: {tool_result.get('status', 'unknown')}")
+                            # Log detailed result
+                            status = tool_result.get('status', 'unknown')
+                            execution_log.append(f"Tool result: {status}")
+                            if status == 'error':
+                                error_msg = tool_result.get('error', 'Unknown error')
+                                execution_log.append(f"  Error details: {error_msg}")
+                                console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
+                            elif status == 'success':
+                                console.print(f"      [green]✓ Success[/green]")
 
                             tool_results.append({
                                 "type": "tool_result",

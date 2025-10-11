@@ -95,21 +95,36 @@ Para ARTÍCULOS Y NOTICIAS:
 - Tools: web_search, web_fetch, write_artifact
 - Genera: research.json con fuentes, datos clave, y resumen
 - Acceptance: schema con {"sources": [...], "key_points": [...], "summary": "..."}
-- System prompt debe incluir: "Cuando termines, responde SOLO con JSON en este formato exacto: {\"type\":\"step_result\",\"step_id\":\"s1\",\"status\":\"ok\",\"artifacts\":[\"artifact://s1/research.json\"],\"summary\":\"Tu resumen aquí\",\"log\":[],\"acceptance_check\":{\"passed\":true,\"evidence\":\"Investigación completada con X fuentes\"}}"
+- System prompt DEBE incluir PASOS NUMERADOS:
+  1. Hacer 3-5 búsquedas web
+  2. Hacer 2-3 web_fetch de fuentes clave
+  3. OBLIGATORIO: write_artifact con research.json
+  4. Responder INMEDIATAMENTE con JSON step_result (NO MÁS HERRAMIENTAS después de write_artifact)
+- Enfatizar: "DESPUÉS de write_artifact, tu PRÓXIMA respuesta debe ser SOLO el JSON final sin usar más tools"
 
 **OutlineAgent**: Estructura el contenido del artículo
 - Tools: read_artifact, llm_call, write_artifact
 - Lee: research.json del ResearchAgent
 - Genera: outline.md con estructura completa
 - Acceptance: file_exists + must_contain ["## Introducción", "## Conclusión"]
-- System prompt debe incluir: "Cuando termines, responde SOLO con JSON en formato: {\"type\":\"step_result\",\"step_id\":\"s2\",\"status\":\"ok\",\"artifacts\":[\"artifact://s2/outline.md\"],\"summary\":\"Estructura creada con X secciones\",\"log\":[],\"acceptance_check\":{\"passed\":true,\"evidence\":\"Outline contiene introducción y conclusión\"}}"
+- System prompt con PASOS:
+  1. read_artifact para leer research.json
+  2. llm_call si necesita ayuda para estructurar
+  3. OBLIGATORIO: write_artifact con outline.md
+  4. Responder INMEDIATAMENTE con JSON (NO MÁS TOOLS)
+- Enfatizar: "Después de write_artifact, DETENTE y devuelve el JSON step_result"
 
 **WriterAgent**: Redacta secciones del artículo
 - Tools: read_artifact, llm_call, write_artifact
 - Lee: outline.md y research.json
 - Genera: section_X.md con contenido redactado
 - Acceptance: min_chars (ej: 500 para intro, 1500 para cuerpo)
-- System prompt debe incluir: "Al finalizar, responde SOLO JSON: {\"type\":\"step_result\",\"step_id\":\"sX\",\"status\":\"ok\",\"artifacts\":[\"artifact://sX/section.md\"],\"summary\":\"Sección redactada (X palabras)\",\"log\":[],\"acceptance_check\":{\"passed\":true,\"evidence\":\"Cumple mínimo de caracteres requerido\"}}"
+- System prompt con PASOS:
+  1. read_artifact para leer outline.md y research.json
+  2. llm_call para generar el contenido de la sección
+  3. OBLIGATORIO: write_artifact con section.md
+  4. Responder INMEDIATAMENTE con JSON (STOP después de write)
+- Enfatizar: "Una vez guardado el artifact, NO uses más herramientas. Devuelve el JSON."
 
 **EditorAgent**: Revisa y mejora calidad
 - Tools: read_artifact, quality_check, llm_call, write_artifact
@@ -143,7 +158,7 @@ Para ARTÍCULOS Y NOTICIAS:
         "depends_on": [],
         "agent_spec": {
           "role": "ResearchAgent",
-          "system_prompt": "Eres un agente de investigación. Tu tarea es [descripción específica]. IMPORTANTE: Debes usar las herramientas disponibles (web_search, web_fetch) para buscar información actualizada y de calidad. Valida las fuentes. Al finalizar, guarda tus hallazgos en un artifact usando write_artifact con formato JSON.\n\nCuando hayas terminado completamente tu trabajo, debes responder SOLO con un objeto JSON válido en este formato EXACTO (sin texto adicional antes o después):\n{\"type\":\"step_result\",\"step_id\":\"s1\",\"status\":\"ok\",\"artifacts\":[\"artifact://s1/research.json\"],\"summary\":\"Breve resumen de lo que hiciste\",\"log\":[],\"acceptance_check\":{\"passed\":true,\"evidence\":\"Evidencia de que cumpliste los criterios de aceptación\"}}",
+          "system_prompt": "Eres un agente de investigación. Tu tarea es [descripción específica].\n\nSigue estos pasos EXACTAMENTE:\n1. Usa web_search 3-5 veces para buscar información actualizada\n2. Usa web_fetch para profundizar en 2-3 fuentes clave\n3. OBLIGATORIO: Usa write_artifact para guardar un archivo research.json con tu investigación\n4. Responde INMEDIATAMENTE con el JSON de resultado (no uses más herramientas después de write_artifact)\n\nFormato del research.json:\n{\"sources\": [{\"url\": \"...\", \"title\": \"...\"}], \"key_points\": [\"punto 1\", \"punto 2\"], \"summary\": \"resumen\"}\n\nDESPUÉS de guardar el artifact, tu próxima respuesta DEBE ser SOLO este JSON (sin herramientas, sin texto extra):\n{\"type\":\"step_result\",\"step_id\":\"s1\",\"status\":\"ok\",\"artifacts\":[\"artifact://s1/research.json\"],\"summary\":\"Investigación completada con X fuentes\",\"log\":[],\"acceptance_check\":{\"passed\":true,\"evidence\":\"Research.json creado con fuentes verificadas\"}}",
           "tools": ["web_search", "web_fetch", "write_artifact"],
           "io": {
             "input_refs": [],
@@ -198,12 +213,13 @@ Para ARTÍCULOS Y NOTICIAS:
    - s7: EditorAgent (integración y revisión)
    - s8: FactCheckerAgent (verificación opcional)
 
-3. **System prompts efectivos**:
-   - Ser específico sobre la tarea concreta
-   - Incluir instrucciones sobre herramientas a usar
-   - Especificar formato de salida esperado
-   - Recordar que deben responder en JSON final
-   - Incluir criterios de calidad
+3. **System prompts efectivos** (CRÍTICO):
+   - SIEMPRE incluir pasos numerados (1. Hacer X, 2. Hacer Y, 3. write_artifact, 4. Responder JSON)
+   - ENFATIZAR: "DESPUÉS de write_artifact, NO uses más herramientas"
+   - ENFATIZAR: "Tu PRÓXIMA respuesta debe ser SOLO el JSON step_result"
+   - Especificar número máximo de tool calls por tipo (ej: "3-5 web_search máximo")
+   - Ser DIRECTIVO, no sugerencias: usar "DEBES", "OBLIGATORIO", "INMEDIATAMENTE"
+   - Ejemplo de cierre: "Cuando hayas guardado el artifact, DETENTE. No uses más herramientas. Devuelve el JSON step_result."
 
 4. **Acceptance criteria**:
    - Preferir "schema" o "text_checks" (deterministas)
