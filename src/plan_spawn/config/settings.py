@@ -15,7 +15,12 @@ class Settings:
 
     # API Keys
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
+    # MCP Server API Keys
     BRAVE_API_KEY: str = os.getenv("BRAVE_API_KEY", "")
+    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
+    POSTGRES_CONNECTION_STRING: str = os.getenv("POSTGRES_CONNECTION_STRING", "")
 
     # Model configuration
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")

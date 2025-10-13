@@ -198,7 +198,7 @@ async def run_article_mode(objective: Optional[str] = None):
     # Initialize orchestrator
     orchestrator = Orchestrator()
 
-    # Run orchestration
+    # Run orchestration with cleanup
     try:
         state = await orchestrator.run(objective)
 
@@ -235,6 +235,10 @@ async def run_article_mode(objective: Optional[str] = None):
         console.print(f"\n[bold red]❌ Error: {str(e)}[/bold red]\n")
         import traceback
         console.print(f"[dim]{traceback.format_exc()}[/dim]")
+
+    finally:
+        # Cleanup MCP connections
+        await orchestrator.cleanup()
 
 
 async def main():
