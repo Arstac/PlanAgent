@@ -143,13 +143,23 @@ class AgentRuntime:
                     # Check if there are any tool_use blocks that need results
                     tool_results = []
                     has_tool_use = False
+                    has_incomplete_tool = False
 
                     for content_block in response.content:
                         if content_block.type == "tool_use":
-                            has_tool_use = True
                             tool_name = content_block.name
                             tool_input = content_block.input
 
+                            # Check if tool input is complete
+                            # For write_artifact, both 'name' and 'content' are required
+                            if tool_name == "write_artifact":
+                                if not isinstance(tool_input, dict) or 'content' not in tool_input or 'name' not in tool_input:
+                                    has_incomplete_tool = True
+                                    execution_log.append(f"Tool call (max_tokens, INCOMPLETE): {tool_name}")
+                                    console.print(f"      [yellow]⚠ Incomplete tool call, skipping[/yellow]")
+                                    continue
+
+                            has_tool_use = True
                             execution_log.append(f"Tool call (max_tokens): {tool_name}")
 
                             # Execute tool
@@ -181,6 +191,12 @@ class AgentRuntime:
                     if has_tool_use:
                         # Provide tool results
                         messages.append({"role": "user", "content": tool_results})
+                    elif has_incomplete_tool:
+                        # Had incomplete tool calls, ask agent to retry with smaller output
+                        messages.append({
+                            "role": "user",
+                            "content": "Your previous response was truncated due to token limit. Please try again with a more concise approach. If writing artifacts, consider breaking content into smaller chunks or summarizing."
+                        })
                     else:
                         # Just text content, prompt to continue
                         messages.append({

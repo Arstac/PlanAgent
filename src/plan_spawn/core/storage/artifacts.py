@@ -25,41 +25,52 @@ class ArtifactStore:
         self.metadata_path.mkdir(exist_ok=True)
     
     def save(
-        self, 
-        step_id: str, 
-        name: str, 
-        content: Any, 
+        self,
+        step_id: str,
+        name: str,
+        content: Any,
         content_type: str = "text"
     ) -> str:
         """
         Save an artifact and return its URI.
-        
+
         Args:
             step_id: Step identifier
             name: Artifact filename
-            content: Content to save
+            content: Content to save (can be dict/list for JSON or string)
             content_type: One of: text, json, binary
-            
+
         Returns:
             URI in format artifact://<step_id>/<name>
         """
         # Create step directory
         step_dir = self.base_path / step_id
         step_dir.mkdir(exist_ok=True)
-        
+
         file_path = step_dir / name
-        
+
         # Save based on type
         if content_type == "json":
-            file_path.write_text(json.dumps(content, indent=2, ensure_ascii=False))
+            # Handle case where content might already be a JSON string
+            if isinstance(content, str):
+                try:
+                    # Try to parse it to validate and then re-serialize properly
+                    parsed = json.loads(content)
+                    file_path.write_text(json.dumps(parsed, indent=2, ensure_ascii=False), encoding="utf-8")
+                except json.JSONDecodeError:
+                    # If it's not valid JSON, treat as text
+                    file_path.write_text(content, encoding="utf-8")
+            else:
+                # Content is already a dict/list, serialize it
+                file_path.write_text(json.dumps(content, indent=2, ensure_ascii=False), encoding="utf-8")
         elif content_type == "binary":
             file_path.write_bytes(content)
         else:  # text
             file_path.write_text(str(content), encoding="utf-8")
-        
+
         # Save metadata
         self._save_metadata(step_id, name, content_type, file_path)
-        
+
         return f"artifact://{step_id}/{name}"
     
     def load(self, uri: str) -> Any:
