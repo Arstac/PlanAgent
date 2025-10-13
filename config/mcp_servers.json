@@ -13,6 +13,20 @@
       },
       "enabled": true,
       "description": "Web search via Brave Search API"
+    },
+    {
+      "name": "github",
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
+      },
+      "enabled": true,
+      "description": "GitHub API access for repositories, issues, PRs, and more"
     }
   ]
 }
