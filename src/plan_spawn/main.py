@@ -142,7 +142,7 @@ python -m plan_spawn.main run "Your objective here"
 ## Configuration
 
 Edit `.env` file:
-- `ANTHROPIC_API_KEY`: Your Claude API key (required)
+- `OPENAI_API_KEY`: Your OpenAI API key (required)
 - `BRAVE_API_KEY`: For web search (optional)
 - `MAX_ITERATIONS_PER_STEP`: Agent autonomy level (default: 15)
 
@@ -242,10 +242,10 @@ async def main():
     print_banner()
     
     # Check if API key is configured
-    if not settings.ANTHROPIC_API_KEY:
-        console.print("[bold red]❌ ERROR: ANTHROPIC_API_KEY not configured[/bold red]\n")
+    if not settings.OPENAI_API_KEY:
+        console.print("[bold red]❌ ERROR: OPENAI_API_KEY not configured[/bold red]\n")
         console.print("Please set your API key in the .env file:")
-        console.print("  ANTHROPIC_API_KEY=your_key_here\n")
+        console.print("  OPENAI_API_KEY=your_key_here\n")
         sys.exit(1)
     
     # Parse command line arguments

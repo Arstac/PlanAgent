@@ -12,13 +12,13 @@ load_dotenv()
 
 class Settings:
     """Global configuration settings."""
-    
+
     # API Keys
-    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     BRAVE_API_KEY: str = os.getenv("BRAVE_API_KEY", "")
-    
+
     # Model configuration
-    CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     
     # Storage
     ARTIFACTS_PATH: Path = Path(os.getenv("ARTIFACTS_PATH", "./artifacts"))
@@ -39,12 +39,12 @@ class Settings:
     @classmethod
     def validate(cls) -> bool:
         """Validate critical settings."""
-        if not cls.ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY is required. Set it in .env file.")
-        
+        if not cls.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY is required. Set it in .env file.")
+
         # Create artifacts directory if it doesn't exist
         cls.ARTIFACTS_PATH.mkdir(parents=True, exist_ok=True)
-        
+
         return True
 
 

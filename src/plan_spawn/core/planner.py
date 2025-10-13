@@ -1,10 +1,10 @@
 """
-Plan generation using Claude as the planner.
+Plan generation using OpenAI as the planner.
 Decomposes tasks into executable subtasks with specialized agents.
 """
 import json
 from datetime import datetime
-from anthropic import Anthropic
+from openai import OpenAI
 from .models import TaskRequest, PlanResponse, Plan
 from ..config.settings import settings
 
@@ -12,13 +12,13 @@ from ..config.settings import settings
 class Planner:
     """
     Generates execution plans by decomposing tasks into subtasks.
-    Uses Claude to create intelligent, adaptive plans.
+    Uses OpenAI to create intelligent, adaptive plans.
     """
-    
+
     def __init__(self, api_key: str = None):
-        self.api_key = api_key or settings.ANTHROPIC_API_KEY
-        self.client = Anthropic(api_key=self.api_key)
-        self.model = settings.CLAUDE_MODEL
+        self.api_key = api_key or settings.OPENAI_API_KEY
+        self.client = OpenAI(api_key=self.api_key)
+        self.model = settings.OPENAI_MODEL
     
     async def create_plan(self, task: TaskRequest) -> Plan:
         """
@@ -32,19 +32,19 @@ class Planner:
         """
         system_prompt = self._build_planner_system_prompt()
         user_prompt = self._build_planner_user_prompt(task)
-        
+
         try:
-            response = self.client.messages.create(
+            response = self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=8000,
-                system=system_prompt,
                 messages=[
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ]
             )
-            
+
             # Extract JSON from response
-            response_text = response.content[0].text
+            response_text = response.choices[0].message.content
             
             # Clean markdown code blocks if present
             response_text = response_text.strip()
@@ -55,18 +55,111 @@ class Planner:
             if response_text.endswith("```"):
                 response_text = response_text[:-3]  # Remove trailing ```
             response_text = response_text.strip()
-            
+
+            # Fix invalid control characters in JSON strings
+            # This handles newlines and other control characters that should be escaped
+            response_text = self._fix_json_control_characters(response_text)
+
             # Parse JSON
             plan_json = json.loads(response_text)
+
+            # Fix common acceptance type errors before validation
+            plan_json = self._fix_acceptance_types(plan_json)
+
             plan_response = PlanResponse(**plan_json)
-            
+
             return plan_response.plan
-            
+
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse plan JSON: {e}\nResponse: {response_text}")
         except Exception as e:
+            # Log the problematic JSON for debugging
+            import sys
+            print(f"\n[DEBUG] Plan JSON that failed validation:", file=sys.stderr)
+            print(json.dumps(plan_json if 'plan_json' in locals() else {}, indent=2, ensure_ascii=False), file=sys.stderr)
             raise RuntimeError(f"Failed to create plan: {e}")
-    
+
+    def _fix_acceptance_types(self, plan_json: dict) -> dict:
+        """
+        Fix common acceptance type errors in the plan JSON.
+        OpenAI sometimes generates invalid acceptance types despite clear instructions.
+        This method corrects them to valid types.
+        """
+        VALID_TYPES = {"schema", "file_exists", "text_checks", "numeric_bounds", "llm_review"}
+
+        # Mapping of invalid types to their correct equivalents
+        TYPE_CORRECTIONS = {
+            "must_contain": "text_checks",
+            "min_chars": "text_checks",
+            "file_exists_and_correct_structure": "text_checks",
+            "content_validation": "text_checks",
+            "json_schema": "schema",
+            "validate_json": "schema",
+            "file_check": "file_exists",
+            "exists": "file_exists",
+        }
+
+        if "plan" in plan_json and "steps" in plan_json["plan"]:
+            for step in plan_json["plan"]["steps"]:
+                if "acceptance" in step and "type" in step["acceptance"]:
+                    acceptance_type = step["acceptance"]["type"]
+
+                    # If type is invalid, try to correct it
+                    if acceptance_type not in VALID_TYPES:
+                        corrected_type = TYPE_CORRECTIONS.get(acceptance_type, "text_checks")
+                        print(f"[WARNING] Correcting invalid acceptance type '{acceptance_type}' -> '{corrected_type}' in step {step.get('id', 'unknown')}")
+                        step["acceptance"]["type"] = corrected_type
+
+        return plan_json
+
+    def _fix_json_control_characters(self, text: str) -> str:
+        """
+        Fix unescaped control characters in JSON strings.
+        This is needed because LLMs sometimes generate JSON with literal newlines
+        inside string values, which is invalid JSON.
+        """
+        import re
+
+        # Strategy: Find string values and escape control characters within them
+        # We need to be careful to only escape characters inside quoted strings
+
+        result = []
+        in_string = False
+        escape_next = False
+
+        for i, char in enumerate(text):
+            if escape_next:
+                result.append(char)
+                escape_next = False
+                continue
+
+            if char == '\\':
+                result.append(char)
+                escape_next = True
+                continue
+
+            if char == '"':
+                in_string = not in_string
+                result.append(char)
+                continue
+
+            # If we're inside a string, escape control characters
+            if in_string:
+                if char == '\n':
+                    result.append('\\n')
+                elif char == '\r':
+                    result.append('\\r')
+                elif char == '\t':
+                    result.append('\\t')
+                elif ord(char) < 32:  # Other control characters
+                    result.append(f'\\u{ord(char):04x}')
+                else:
+                    result.append(char)
+            else:
+                result.append(char)
+
+        return ''.join(result)
+
     def _build_planner_system_prompt(self) -> str:
         """Build the system prompt for the planner."""
         return """Eres un Planificador-Orquestador experto especializado en descomponer tareas complejas en subtareas ejecutables por agentes autónomos.
@@ -87,6 +180,31 @@ Generas planes de ejecución detallados, donde cada subtarea (step) es ejecutada
    - Solicitar replanificación si detectan problemas
    - Auto-validarse contra acceptance criteria
 
+# TIPOS DE ACCEPTANCE CRITERIA (CRÍTICO)
+
+SOLO puedes usar estos 5 tipos de acceptance. NO inventes otros:
+
+1. **"schema"**: Valida estructura JSON
+   - Requiere: path_ref, schema (con "required" y "properties")
+   - Ejemplo: {"type": "schema", "path_ref": "artifact://s1/data.json", "schema": {"required": ["field1"], "properties": {...}}}
+
+2. **"file_exists"**: Verifica que el archivo exista
+   - Requiere: path_ref
+   - Ejemplo: {"type": "file_exists", "path_ref": "artifact://s1/output.md"}
+
+3. **"text_checks"**: Valida contenido de texto
+   - Requiere: path_ref
+   - Opcional: min_chars, must_contain (lista de strings que deben aparecer)
+   - Ejemplo: {"type": "text_checks", "path_ref": "artifact://s1/article.md", "min_chars": 1000, "must_contain": ["## Introducción", "## Conclusión"]}
+
+4. **"numeric_bounds"**: Valida rangos numéricos
+   - Requiere: path_ref, bounds
+   - Ejemplo: {"type": "numeric_bounds", "path_ref": "artifact://s1/metrics.json", "bounds": {"accuracy": {"min": 0.8}}}
+
+5. **"llm_review"**: Revisión cualitativa por LLM
+   - Requiere: path_ref, rubric (lista de criterios)
+   - Ejemplo: {"type": "llm_review", "path_ref": "artifact://s1/essay.md", "rubric": ["Coherencia", "Gramática correcta"]}
+
 # ARQUETIPOS DE AGENTES DISPONIBLES
 
 Para ARTÍCULOS Y NOTICIAS:
@@ -106,7 +224,7 @@ Para ARTÍCULOS Y NOTICIAS:
 - Tools: read_artifact, llm_call, write_artifact
 - Lee: research.json del ResearchAgent
 - Genera: outline.md con estructura completa
-- Acceptance: file_exists + must_contain ["## Introducción", "## Conclusión"]
+- Acceptance: type "text_checks" con must_contain ["## Introducción", "## Conclusión"]
 - System prompt con PASOS:
   1. read_artifact para leer research.json
   2. llm_call si necesita ayuda para estructurar
@@ -118,7 +236,7 @@ Para ARTÍCULOS Y NOTICIAS:
 - Tools: read_artifact, llm_call, write_artifact
 - Lee: outline.md y research.json
 - Genera: section_X.md con contenido redactado
-- Acceptance: min_chars (ej: 500 para intro, 1500 para cuerpo)
+- Acceptance: type "text_checks" con min_chars (ej: 500 para intro, 1500 para cuerpo)
 - System prompt con PASOS:
   1. read_artifact para leer outline.md y research.json
   2. llm_call para generar el contenido de la sección
@@ -221,10 +339,12 @@ Para ARTÍCULOS Y NOTICIAS:
    - Ser DIRECTIVO, no sugerencias: usar "DEBES", "OBLIGATORIO", "INMEDIATAMENTE"
    - Ejemplo de cierre: "Cuando hayas guardado el artifact, DETENTE. No uses más herramientas. Devuelve el JSON step_result."
 
-4. **Acceptance criteria**:
+4. **Acceptance criteria** (USA SOLO LOS 5 TIPOS PERMITIDOS):
+   - TIPOS VÁLIDOS: "schema", "file_exists", "text_checks", "numeric_bounds", "llm_review"
+   - NO uses otros tipos como "must_contain" o "min_chars" como tipo (son CAMPOS de "text_checks")
    - Preferir "schema" o "text_checks" (deterministas)
    - Usar "llm_review" solo cuando necesario
-   - Ser específico en requisitos (min_chars, must_contain, etc.)
+   - Para validar texto con requisitos: usa "text_checks" con campos min_chars y/o must_contain
 
 5. **Dependencias**:
    - Orden lógico: research → outline → writing → editing
@@ -235,19 +355,24 @@ Para ARTÍCULOS Y NOTICIAS:
 # IMPORTANTE
 - NO generes texto markdown (```json)
 - NO agregues explicaciones fuera del JSON
+- ASEGÚRATE de que todos los saltos de línea dentro de strings JSON estén escapados como \\n
 - Todos los system_prompt deben recordar responder en JSON
 - Los agents son autónomos: pueden hacer múltiples tool_calls
 - IDs de steps simples: s1, s2, s3, etc.
+- El JSON debe ser válido y parseable: usa \\n para nuevas líneas, \\t para tabs, \\" para comillas
+- CRÍTICO: En acceptance.type SOLO usa: "schema", "file_exists", "text_checks", "numeric_bounds", "llm_review"
 """
     
     def _build_planner_user_prompt(self, task: TaskRequest) -> str:
         """Build user prompt with task details."""
-        return json.dumps({
+        prompt_data = {
             "objective": task.objective,
             "constraints": task.constraints,
             "context": task.context,
-            "available_tools": task.available_tools
-        }, indent=2, ensure_ascii=False)
+            "available_tools": task.available_tools,
+            "reminder": "IMPORTANTE: En acceptance.type usa SOLO estos valores: 'schema', 'file_exists', 'text_checks', 'numeric_bounds', 'llm_review'"
+        }
+        return json.dumps(prompt_data, indent=2, ensure_ascii=False)
     
     def validate_plan(self, plan: Plan) -> tuple[bool, list[str]]:
         """

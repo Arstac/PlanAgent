@@ -28,6 +28,17 @@ class Tool:
             "input_schema": self.parameters
         }
 
+    def to_openai_schema(self) -> dict:
+        """Convert to OpenAI tool schema format."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters
+            }
+        }
+
 
 class ToolRegistry:
     """
@@ -80,13 +91,28 @@ class ToolRegistry:
         return available
     
     def get_schemas_for_agent(
-        self, 
-        agent_role: str, 
-        tool_names: list[str] = None
+        self,
+        agent_role: str,
+        tool_names: list[str] = None,
+        format: str = "openai"
     ) -> list[dict]:
-        """Get Anthropic-compatible tool schemas for an agent."""
+        """
+        Get tool schemas for an agent in the specified format.
+
+        Args:
+            agent_role: Role of the agent
+            tool_names: Optional list of specific tool names to filter
+            format: Schema format - "openai" or "anthropic" (default: "openai")
+
+        Returns:
+            List of tool schemas in the requested format
+        """
         tools = self.list_for_agent(agent_role, tool_names)
-        return [tool.to_anthropic_schema() for tool in tools]
+
+        if format == "anthropic":
+            return [tool.to_anthropic_schema() for tool in tools]
+        else:  # default to openai
+            return [tool.to_openai_schema() for tool in tools]
     
     def track_usage(self, tool_name: str):
         """Track tool usage for statistics."""

@@ -4,12 +4,17 @@ Creates ephemeral agents that can use tools iteratively.
 """
 import json
 import time
+import logging
 from typing import Dict, Any, Optional
-from anthropic import Anthropic
+from openai import OpenAI
 from .models import Step, StepResult, AcceptanceCheck
 from .tools.registry import ToolRegistry
 from .storage.artifacts import ArtifactStore
 from ..config.settings import settings
+
+# Setup detailed logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 class AgentRuntime:
@@ -17,40 +22,80 @@ class AgentRuntime:
     Executes individual steps by spawning ephemeral agents.
     Each agent can make multiple tool calls iteratively until completion.
     """
-    
+
     def __init__(
-        self, 
+        self,
         api_key: str = None,
         tool_registry: ToolRegistry = None,
         artifact_store: ArtifactStore = None
     ):
-        self.api_key = api_key or settings.ANTHROPIC_API_KEY
-        self.client = Anthropic(api_key=self.api_key)
-        self.model = settings.CLAUDE_MODEL
+        self.api_key = api_key or settings.OPENAI_API_KEY
+        self.client = OpenAI(api_key=self.api_key)
+        self.model = settings.OPENAI_MODEL
         self.tools = tool_registry
         self.artifacts = artifact_store
-    
+
+        # Setup file logging for detailed debugging
+        self._setup_file_logging()
+
+    def _setup_file_logging(self):
+        """Setup detailed file logging for debugging agent conversations."""
+        import os
+        from datetime import datetime
+
+        # Create logs directory if it doesn't exist
+        log_dir = "agent_logs"
+        os.makedirs(log_dir, exist_ok=True)
+
+        # Create a file handler with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = os.path.join(log_dir, f"agent_runtime_{timestamp}.log")
+
+        # Add file handler to logger
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+
+        # Create formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+
+        # Add handler to logger
+        logger.addHandler(file_handler)
+
+        logger.info(f"Agent runtime logging initialized: {log_file}")
+
     async def execute_step(self, step: Step, context: Dict[str, Any]) -> StepResult:
         """
         Execute a single step by creating an ephemeral agent.
-        
+
         The agent can:
         - Make multiple tool calls iteratively
         - Access artifacts from previous steps
         - Self-validate against acceptance criteria
         - Request replan if needed
-        
+
         Args:
             step: Step specification
             context: Execution context (objective, input_refs, etc.)
-            
+
         Returns:
             StepResult with status and artifacts
         """
         start_time = time.time()
-        
-        # Build initial message
+
+        logger.info(f"=== Starting execution of step {step.id}: {step.title} ===")
+        logger.debug(f"Agent role: {step.agent_spec.role}")
+        logger.debug(f"Available tools: {step.agent_spec.tools}")
+        logger.debug(f"Context: {json.dumps(context, indent=2, ensure_ascii=False)}")
+
+        # Build initial messages (system + user)
         messages = [
+            {
+                "role": "system",
+                "content": step.agent_spec.system_prompt
+            },
             {
                 "role": "user",
                 "content": json.dumps({
@@ -60,6 +105,9 @@ class AgentRuntime:
                 }, ensure_ascii=False)
             }
         ]
+
+        logger.debug(f"Initial system prompt length: {len(step.agent_spec.system_prompt)} chars")
+        logger.debug(f"System prompt preview: {step.agent_spec.system_prompt[:200]}...")
         
         # Get tool schemas for this agent
         tool_schemas = self.tools.get_schemas_for_agent(
@@ -81,163 +129,217 @@ class AgentRuntime:
             console.print(f"  [dim]→ Iteration {iteration}/{max_iterations}[/dim]")
 
             try:
-                # Make API call to Claude
-                response = self.client.messages.create(
+                # Make API call to OpenAI
+                response = self.client.chat.completions.create(
                     model=self.model,
                     max_tokens=step.agent_spec.policies.max_tokens or settings.MAX_TOKENS_PER_CALL,
-                    system=step.agent_spec.system_prompt,
                     messages=messages,
                     tools=tool_schemas if tool_schemas else None
                 )
-                
-                # Check stop reason
-                if response.stop_reason == "end_turn":
+
+                # Get the message and finish reason
+                message = response.choices[0].message
+                finish_reason = response.choices[0].finish_reason
+
+                # Check finish reason
+                if finish_reason == "stop":
                     # Agent has finished
+                    logger.info(f"[Step {step.id}] Agent finished with finish_reason='stop'")
                     result = self._parse_final_result(response, step.id, execution_log)
                     result.duration_s = time.time() - start_time
+                    logger.info(f"[Step {step.id}] Execution completed in {result.duration_s:.2f}s with status={result.status}")
                     return result
-                
-                elif response.stop_reason == "tool_use":
+
+                elif finish_reason == "tool_calls":
                     # Agent wants to use tools
-                    tool_results = []
-                    
-                    for content_block in response.content:
-                        if content_block.type == "tool_use":
-                            tool_name = content_block.name
-                            tool_input = content_block.input
+                    tool_calls = message.tool_calls
 
-                            execution_log.append(f"Tool call: {tool_name}")
-                            console.print(f"    [cyan]🔧 {tool_name}[/cyan]")
-                            
-                            # Execute tool
-                            tool_result = await self._execute_tool(
-                                tool_name,
-                                tool_input,
-                                step.id
-                            )
+                    # Add assistant message to conversation
+                    messages.append({
+                        "role": "assistant",
+                        "content": message.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": tc.type,
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments
+                                }
+                            } for tc in tool_calls
+                        ]
+                    })
 
-                            # Log detailed result
-                            status = tool_result.get('status', 'unknown')
-                            execution_log.append(f"Tool result: {status}")
-                            if status == 'error':
-                                error_msg = tool_result.get('error', 'Unknown error')
-                                execution_log.append(f"  Error details: {error_msg}")
-                                console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
-                            elif status == 'success':
-                                console.print(f"      [green]✓ Success[/green]")
-                            
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": content_block.id,
-                                "content": json.dumps(tool_result, ensure_ascii=False)
+                    # Execute each tool
+                    for tool_call in tool_calls:
+                        tool_name = tool_call.function.name
+                        tool_input = json.loads(tool_call.function.arguments)
+
+                        execution_log.append(f"Tool call: {tool_name}")
+                        console.print(f"    [cyan]🔧 {tool_name}[/cyan]")
+
+                        # Execute tool
+                        tool_result = await self._execute_tool(
+                            tool_name,
+                            tool_input,
+                            step.id
+                        )
+
+                        # Log detailed result
+                        status = tool_result.get('status', 'unknown')
+                        execution_log.append(f"Tool result: {status}")
+                        if status == 'error':
+                            error_msg = tool_result.get('error', 'Unknown error')
+                            execution_log.append(f"  Error details: {error_msg}")
+                            console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
+                        elif status == 'success':
+                            console.print(f"      [green]✓ Success[/green]")
+
+                        # Add tool result to conversation
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(tool_result, ensure_ascii=False)
+                        })
+
+                        # If write_artifact was successful, remind agent to finish
+                        if tool_name == "write_artifact" and tool_result.get("status") == "success":
+                            logger.info(f"[Step {step.id}] write_artifact completed - adding reminder to finish")
+                            reminder_json_example = {
+                                "type": "step_result",
+                                "step_id": step.id,
+                                "status": "ok",
+                                "artifacts": ["artifact://YOUR_STEP_ID/filename.ext"],
+                                "summary": "Brief description of what was accomplished",
+                                "log": [],
+                                "acceptance_check": {
+                                    "passed": True,
+                                    "evidence": "Explanation of why acceptance criteria are met"
+                                }
+                            }
+                            messages.append({
+                                "role": "user",
+                                "content": f"Perfect! The artifact was saved successfully.\n\nNow you MUST respond with the final step_result JSON. Do NOT use any more tools. Your next response must be ONLY this JSON structure (fill in the actual artifact URIs you created):\n\n{json.dumps(reminder_json_example, indent=2, ensure_ascii=False)}"
                             })
-                    
-                    # Add to conversation
-                    messages.append({"role": "assistant", "content": response.content})
-                    messages.append({"role": "user", "content": tool_results})
                 
-                elif response.stop_reason == "max_tokens":
+                elif finish_reason == "length":
                     execution_log.append("Warning: Hit max_tokens limit")
                     console.print(f"    [yellow]⚠ Hit max_tokens limit[/yellow]")
 
-                    # Check if there are any tool_use blocks that need results
-                    tool_results = []
-                    has_tool_use = False
+                    # Check if there are any tool_calls that need results
+                    has_tool_calls = message.tool_calls is not None and len(message.tool_calls) > 0
                     has_incomplete_tool = False
 
-                    for content_block in response.content:
-                        if content_block.type == "tool_use":
-                            tool_name = content_block.name
-                            tool_input = content_block.input
-
-                            # Check if tool input is complete
-                            # For write_artifact, both 'name' and 'content' are required
-                            if tool_name == "write_artifact":
-                                if not isinstance(tool_input, dict) or 'content' not in tool_input or 'name' not in tool_input:
-                                    has_incomplete_tool = True
-                                    execution_log.append(f"Tool call (max_tokens, INCOMPLETE): {tool_name}")
-                                    console.print(f"      [yellow]⚠ Incomplete tool call, skipping[/yellow]")
-                                    continue
-
-                            has_tool_use = True
-                            execution_log.append(f"Tool call (max_tokens): {tool_name}")
-
-                            # Execute tool
-                            tool_result = await self._execute_tool(
-                                tool_name,
-                                tool_input,
-                                step.id
-                            )
-
-                            # Log detailed result
-                            status = tool_result.get('status', 'unknown')
-                            execution_log.append(f"Tool result: {status}")
-                            if status == 'error':
-                                error_msg = tool_result.get('error', 'Unknown error')
-                                execution_log.append(f"  Error details: {error_msg}")
-                                console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
-                            elif status == 'success':
-                                console.print(f"      [green]✓ Success[/green]")
-
-                            tool_results.append({
-                                "type": "tool_result",
-                                "tool_use_id": content_block.id,
-                                "content": json.dumps(tool_result, ensure_ascii=False)
-                            })
-
-                    # Add to conversation
-                    messages.append({"role": "assistant", "content": response.content})
-
-                    if has_tool_use:
-                        # Provide tool results
-                        messages.append({"role": "user", "content": tool_results})
-                    elif has_incomplete_tool:
-                        # Had incomplete tool calls, ask agent to retry with smaller output
+                    if has_tool_calls:
+                        # Add assistant message first
                         messages.append({
-                            "role": "user",
-                            "content": "Your previous response was truncated due to token limit. Please try again with a more concise approach. If writing artifacts, consider breaking content into smaller chunks or summarizing."
+                            "role": "assistant",
+                            "content": message.content,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": tc.type,
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments
+                                    }
+                                } for tc in message.tool_calls
+                            ]
                         })
+
+                        for tool_call in message.tool_calls:
+                            tool_name = tool_call.function.name
+                            try:
+                                tool_input = json.loads(tool_call.function.arguments)
+
+                                # Check if tool input is complete
+                                # For write_artifact, both 'name' and 'content' are required
+                                if tool_name == "write_artifact":
+                                    if not isinstance(tool_input, dict) or 'content' not in tool_input or 'name' not in tool_input:
+                                        has_incomplete_tool = True
+                                        execution_log.append(f"Tool call (max_tokens, INCOMPLETE): {tool_name}")
+                                        console.print(f"      [yellow]⚠ Incomplete tool call, skipping[/yellow]")
+                                        continue
+
+                                execution_log.append(f"Tool call (max_tokens): {tool_name}")
+
+                                # Execute tool
+                                tool_result = await self._execute_tool(
+                                    tool_name,
+                                    tool_input,
+                                    step.id
+                                )
+
+                                # Log detailed result
+                                status = tool_result.get('status', 'unknown')
+                                execution_log.append(f"Tool result: {status}")
+                                if status == 'error':
+                                    error_msg = tool_result.get('error', 'Unknown error')
+                                    execution_log.append(f"  Error details: {error_msg}")
+                                    console.print(f"      [red]✗ Error: {error_msg[:100]}[/red]")
+                                elif status == 'success':
+                                    console.print(f"      [green]✓ Success[/green]")
+
+                                # Add tool result
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tool_call.id,
+                                    "content": json.dumps(tool_result, ensure_ascii=False)
+                                })
+                            except json.JSONDecodeError:
+                                has_incomplete_tool = True
+                                execution_log.append(f"Tool call (max_tokens, INVALID JSON): {tool_name}")
+                                console.print(f"      [yellow]⚠ Invalid JSON in tool arguments[/yellow]")
+
                     else:
-                        # Just text content, prompt to continue
+                        # No tool calls, add assistant message and prompt to continue
                         messages.append({
-                            "role": "user",
-                            "content": "Continue with your task. Provide final step_result when done."
+                            "role": "assistant",
+                            "content": message.content
                         })
-                
-                elif response.stop_reason == "refusal":
-                    # Claude refused to process the request
-                    refusal_text = ""
-                    for block in response.content:
-                        if hasattr(block, "text"):
-                            refusal_text = block.text
-                            break
 
-                    execution_log.append(f"Refusal: {refusal_text[:200]}")
+                        if has_incomplete_tool:
+                            # Had incomplete tool calls, ask agent to retry with smaller output
+                            messages.append({
+                                "role": "user",
+                                "content": "Your previous response was truncated due to token limit. Please try again with a more concise approach. If writing artifacts, consider breaking content into smaller chunks or summarizing."
+                            })
+                        else:
+                            # Just text content, prompt to continue
+                            messages.append({
+                                "role": "user",
+                                "content": "Continue with your task. Provide final step_result when done."
+                            })
+                
+                elif finish_reason == "content_filter":
+                    # OpenAI content filter triggered
+                    refusal_text = message.content or "Content filtered by OpenAI"
+                    execution_log.append(f"Content filter: {refusal_text[:200]}")
 
                     return StepResult(
                         step_id=step.id,
                         status="fail",
                         artifacts=[],
-                        summary=f"Claude refused the request: {refusal_text[:150]}",
+                        summary=f"Content filtered: {refusal_text[:150]}",
                         log=execution_log,
                         acceptance_check=AcceptanceCheck(
                             passed=False,
-                            evidence=f"Refusal: {refusal_text}"
+                            evidence=f"Content filter: {refusal_text}"
                         ),
                         duration_s=time.time() - start_time
                     )
 
                 else:
-                    # Unexpected stop reason
+                    # Unexpected finish reason
                     return StepResult(
                         step_id=step.id,
                         status="fail",
                         artifacts=[],
-                        summary=f"Unexpected stop reason: {response.stop_reason}",
+                        summary=f"Unexpected finish reason: {finish_reason}",
                         log=execution_log,
                         acceptance_check=AcceptanceCheck(
                             passed=False,
-                            evidence=f"Stop reason: {response.stop_reason}"
+                            evidence=f"Finish reason: {finish_reason}"
                         ),
                         duration_s=time.time() - start_time
                     )
@@ -325,8 +427,8 @@ class AgentRuntime:
             }
     
     def _parse_final_result(
-        self, 
-        response, 
+        self,
+        response,
         step_id: str,
         execution_log: list[str]
     ) -> StepResult:
@@ -334,13 +436,14 @@ class AgentRuntime:
         Parse the agent's final response into a StepResult.
         The agent should return JSON matching StepResult schema.
         """
-        # Find text content in response
-        text_content = None
-        for block in response.content:
-            if hasattr(block, "text"):
-                text_content = block.text
-                break
-        
+        # Get text content from OpenAI response
+        text_content = response.choices[0].message.content
+
+        # Log the raw response for debugging
+        logger.debug(f"[Step {step_id}] Raw final response from agent:")
+        logger.debug(f"{text_content}")
+        execution_log.append(f"Raw response length: {len(text_content) if text_content else 0} chars")
+
         if not text_content:
             return StepResult(
                 step_id=step_id,
@@ -358,6 +461,8 @@ class AgentRuntime:
             # Clean up the response - remove markdown code blocks and extra text
             cleaned_content = text_content.strip()
 
+            execution_log.append(f"Cleaning response...")
+
             # Remove leading text before JSON (common pattern: agent explains then provides JSON)
             # Look for the first { or [ character
             json_start = -1
@@ -367,25 +472,40 @@ class AgentRuntime:
                     break
 
             if json_start > 0:
+                skipped_text = cleaned_content[:json_start]
+                execution_log.append(f"Skipped leading text: {skipped_text[:100]}...")
                 cleaned_content = cleaned_content[json_start:]
 
             # Remove markdown code blocks if present
             if cleaned_content.startswith("```json"):
                 cleaned_content = cleaned_content[7:]  # Remove ```json
+                execution_log.append("Removed ```json wrapper")
             elif cleaned_content.startswith("```"):
                 cleaned_content = cleaned_content[3:]  # Remove ```
+                execution_log.append("Removed ``` wrapper")
 
             if cleaned_content.endswith("```"):
                 cleaned_content = cleaned_content[:-3]  # Remove trailing ```
+                execution_log.append("Removed trailing ```")
 
             cleaned_content = cleaned_content.strip()
 
+            # Log the cleaned JSON for debugging
+            logger.debug(f"[Step {step_id}] Cleaned JSON content:")
+            logger.debug(f"{cleaned_content[:500]}...")
+            execution_log.append(f"Cleaned JSON length: {len(cleaned_content)} chars")
+
             # Try to parse as JSON
             result_dict = json.loads(cleaned_content)
+            execution_log.append(f"Successfully parsed JSON with type: {result_dict.get('type', 'NO TYPE')}")
 
             # Validate it's a step_result
             if result_dict.get("type") != "step_result":
-                raise ValueError("Response is not a step_result")
+                logger.warning(f"[Step {step_id}] Response type is '{result_dict.get('type')}', expected 'step_result'")
+                execution_log.append(f"Invalid type: {result_dict.get('type')}")
+                # Log the full dict structure
+                logger.debug(f"[Step {step_id}] Full response dict: {json.dumps(result_dict, indent=2)}")
+                raise ValueError(f"Response type is '{result_dict.get('type')}', expected 'step_result'")
 
             # Create StepResult from dict
             result = StepResult(**result_dict)

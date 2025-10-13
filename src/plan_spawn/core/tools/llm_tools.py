@@ -2,7 +2,7 @@
 LLM utility tools for agents.
 """
 from typing import Dict, Any
-from anthropic import Anthropic
+from openai import OpenAI
 from .registry import register_tool
 from ...config.settings import settings
 
@@ -49,28 +49,28 @@ async def llm_call(
         Dict with generated text
     """
     try:
-        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
         full_prompt = prompt
         if context:
             full_prompt = f"Context:\n{context}\n\nTask:\n{prompt}"
-        
-        response = client.messages.create(
-            model=settings.CLAUDE_MODEL,
+
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
             max_tokens=max_tokens,
             messages=[
                 {"role": "user", "content": full_prompt}
             ]
         )
-        
-        text = response.content[0].text
-        
+
+        text = response.choices[0].message.content
+
         return {
             "status": "success",
             "text": text,
             "usage": {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens
             }
         }
     except Exception as e:
@@ -119,8 +119,8 @@ async def quality_check(
         criteria = ["grammar", "clarity", "coherence", "style"]
     
     try:
-        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
         prompt = f"""Analyze the following text for quality based on these criteria: {', '.join(criteria)}.
 
 Provide:
@@ -139,20 +139,20 @@ Respond in JSON format:
   "issues": ["issue1", "issue2", ...],
   "suggestions": ["suggestion1", "suggestion2", ...]
 }}"""
-        
-        response = client.messages.create(
-            model=settings.CLAUDE_MODEL,
+
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
             max_tokens=1024,
             messages=[
                 {"role": "user", "content": prompt}
             ]
         )
-        
+
         # Parse JSON response
         import json
-        result = json.loads(response.content[0].text)
+        result = json.loads(response.choices[0].message.content)
         result["status"] = "success"
-        
+
         return result
         
     except Exception as e:
@@ -199,8 +199,8 @@ async def fact_verify(
         Dict with verification result
     """
     try:
-        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
         prompt = f"""Analyze this factual claim and assess its verifiability:
 
 Claim: {claim}
@@ -220,20 +220,20 @@ Respond in JSON:
   "verification_needed": ["source1", "source2", ...],
   "red_flags": ["flag1", ...]
 }}"""
-        
-        response = client.messages.create(
-            model=settings.CLAUDE_MODEL,
+
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
             max_tokens=512,
             messages=[
                 {"role": "user", "content": prompt}
             ]
         )
-        
+
         import json
-        result = json.loads(response.content[0].text)
+        result = json.loads(response.choices[0].message.content)
         result["status"] = "success"
         result["claim"] = claim
-        
+
         return result
         
     except Exception as e:
