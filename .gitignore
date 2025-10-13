@@ -20,6 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
+#Error_log.txt file
+error_log.txt
+
 # Virtual Environment
 venv/
 env/
