@@ -581,10 +581,10 @@ class AgentRuntime:
                     )
                 
                 content = self.artifacts.load(acceptance.path_ref)
-                
-                # Check required fields
-                if acceptance.schema and "required" in acceptance.schema:
-                    required_fields = acceptance.schema["required"]
+
+                # Check required fields (use schema_def which has alias 'schema')
+                if acceptance.schema_def and "required" in acceptance.schema_def:
+                    required_fields = acceptance.schema_def["required"]
                     if not all(field in content for field in required_fields):
                         missing = [f for f in required_fields if f not in content]
                         return AcceptanceCheck(

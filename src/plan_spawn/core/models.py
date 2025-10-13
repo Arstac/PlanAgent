@@ -32,11 +32,11 @@ class TaskRequest(BaseModel):
 
 class Acceptance(BaseModel):
     """Acceptance criteria for step validation."""
-    model_config = {"protected_namespaces": ()}  # Allow 'schema' field
-    
+    model_config = {"protected_namespaces": ()}  # Suppress warnings
+
     type: Literal["schema", "file_exists", "text_checks", "numeric_bounds", "llm_review"]
     path_ref: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None
+    schema_def: Optional[Dict[str, Any]] = Field(default=None, alias="schema")  # Renamed from 'schema' to avoid shadowing BaseModel.schema
     columns: Optional[List[str]] = None
     min_rows: Optional[int] = None
     must_contain: Optional[List[str]] = None

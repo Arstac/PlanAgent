@@ -138,16 +138,26 @@ async def _fallback_search(query: str, max_results: int) -> Dict[str, Any]:
 async def web_fetch(url: str, extract_links: bool = False, **kwargs) -> Dict[str, Any]:
     """
     Fetch and extract content from a URL.
-    
+
     Args:
         url: URL to fetch
         extract_links: Whether to extract links
-        
+
     Returns:
         Dict with extracted content
     """
     try:
-        async with aiohttp.ClientSession() as session:
+        # Use browser-like headers to avoid 403 errors
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 if response.status != 200:
                     return {
@@ -155,8 +165,14 @@ async def web_fetch(url: str, extract_links: bool = False, **kwargs) -> Dict[str
                         "error": f"HTTP {response.status}",
                         "url": url
                     }
-                
-                html = await response.text()
+
+                # Try to read with proper encoding detection
+                try:
+                    # Try UTF-8 first
+                    html = await response.text(encoding='utf-8')
+                except UnicodeDecodeError:
+                    # Fallback to latin-1 which accepts all byte values
+                    html = await response.text(encoding='latin-1')
                 soup = BeautifulSoup(html, 'lxml')
                 
                 # Remove script and style elements

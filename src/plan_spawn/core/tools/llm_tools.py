@@ -150,11 +150,34 @@ Respond in JSON format:
 
         # Parse JSON response
         import json
-        result = json.loads(response.choices[0].message.content)
-        result["status"] = "success"
+        content = response.choices[0].message.content.strip()
 
-        return result
-        
+        # Clean markdown code blocks if present
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
+        # Find JSON object in the text
+        json_start = content.find('{')
+        if json_start != -1:
+            content = content[json_start:]
+
+        try:
+            result = json.loads(content)
+            result["status"] = "success"
+            return result
+        except json.JSONDecodeError as je:
+            # If JSON parsing fails, return the raw text with error
+            return {
+                "status": "error",
+                "error": f"Failed to parse JSON: {str(je)}",
+                "raw_response": content[:500]  # Include snippet of response
+            }
+
     except Exception as e:
         return {
             "status": "error",
@@ -230,12 +253,36 @@ Respond in JSON:
         )
 
         import json
-        result = json.loads(response.choices[0].message.content)
-        result["status"] = "success"
-        result["claim"] = claim
+        content = response.choices[0].message.content.strip()
 
-        return result
-        
+        # Clean markdown code blocks if present
+        if content.startswith("```json"):
+            content = content[7:]
+        elif content.startswith("```"):
+            content = content[3:]
+        if content.endswith("```"):
+            content = content[:-3]
+        content = content.strip()
+
+        # Find JSON object in the text
+        json_start = content.find('{')
+        if json_start != -1:
+            content = content[json_start:]
+
+        try:
+            result = json.loads(content)
+            result["status"] = "success"
+            result["claim"] = claim
+            return result
+        except json.JSONDecodeError as je:
+            # If JSON parsing fails, return the raw text with error
+            return {
+                "status": "error",
+                "error": f"Failed to parse JSON: {str(je)}",
+                "claim": claim,
+                "raw_response": content[:500]  # Include snippet of response
+            }
+
     except Exception as e:
         return {
             "status": "error",

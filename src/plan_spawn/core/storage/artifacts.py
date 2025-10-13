@@ -43,9 +43,9 @@ class ArtifactStore:
         Returns:
             URI in format artifact://<step_id>/<name>
         """
-        # Create step directory
+        # Create step directory (parents=True ensures all parent directories are created)
         step_dir = self.base_path / step_id
-        step_dir.mkdir(exist_ok=True)
+        step_dir.mkdir(parents=True, exist_ok=True)
 
         file_path = step_dir / name
 
