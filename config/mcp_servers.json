@@ -27,6 +27,13 @@
       },
       "enabled": true,
       "description": "GitHub API access for repositories, issues, PRs, and more"
+    },
+    {
+      "name": "agentnews",
+      "type": "http",
+      "url": "https://agent-news.fastmcp.app/mcp",
+      "enabled": true,
+      "description": "AI Agent news and updates"
     }
   ]
 }

@@ -8,7 +8,7 @@ import os
 from typing import Dict, List, Any, Optional, Literal
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 from rich.console import Console
 
 
@@ -132,19 +132,19 @@ class MCPClient:
         sse_read_timeout: float = 300.0
     ):
         """
-        Conectar a un servidor MCP via HTTP/SSE (servidor remoto).
+        Conectar a un servidor MCP via HTTP Streamable (servidor remoto).
 
         Args:
             server_name: Nombre identificador del servidor
-            url: URL del endpoint SSE (ej: "https://api.example.com/mcp/")
+            url: URL del endpoint HTTP (ej: "https://api.example.com/mcp")
             headers: Headers HTTP (ej: {"Authorization": "Bearer token"})
             timeout: Timeout para operaciones HTTP regulares (segundos)
-            sse_read_timeout: Timeout para operaciones SSE (segundos)
+            sse_read_timeout: Timeout para operaciones de lectura SSE (segundos)
 
         Example:
             await mcp_client.connect_http_server(
                 "github-copilot",
-                "https://api.githubcopilot.com/mcp/",
+                "https://api.githubcopilot.com/mcp",
                 headers={"Authorization": "Bearer ghp_..."}
             )
         """
@@ -157,12 +157,12 @@ class MCPClient:
         async def maintain_http_connection():
             nonlocal connection_error
             try:
-                async with sse_client(
+                async with streamablehttp_client(
                     url=url,
                     headers=headers,
                     timeout=timeout,
                     sse_read_timeout=sse_read_timeout
-                ) as (read, write):
+                ) as (read, write, get_session_id):
                     async with ClientSession(read, write) as session:
                         # Inicializar sesión
                         await session.initialize()

@@ -8,7 +8,7 @@ from pathlib import Path
 # Añadir src al path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from plan_spawn.core.orchestrator import Orchestrator
+from src.plan_spawn.core.orchestrator import Orchestrator
 
 
 async def test_mcp():
